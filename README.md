@@ -11,6 +11,9 @@ A basic 3D model viewer application built with Python, PyQt6, PyVista, and Trime
 *   Allows overriding mesh color.
 *   Allows adjusting mesh opacity.
 *   Uses vertex colors if present in the loaded file.
+*   Displays basic mesh info (vertex/cell count) in status bar.
+*   Saves screenshots (PNG with transparent background, JPG) via File menu.
+*   Saves the loaded mesh to various formats (PLY, STL, OBJ, GLB, etc.) via File menu.
 
 ## Setup
 

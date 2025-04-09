@@ -1,8 +1,10 @@
 import sys
+import os # Import os for path manipulation in screenshot
 from PyQt6.QtWidgets import (
     QApplication, QMainWindow, QVBoxLayout, QHBoxLayout, QWidget, 
     QPushButton, QFileDialog, QMessageBox, QRadioButton, QButtonGroup,
-    QColorDialog, QSlider, QLabel, QMenuBar, QMenu, QSizePolicy
+    QColorDialog, QSlider, QLabel, QMenuBar, QMenu, QSizePolicy,
+    QStatusBar # Added status bar
 )
 from PyQt6.QtGui import QAction, QColor
 from PyQt6.QtCore import Qt
@@ -25,8 +27,11 @@ class MainWindow(QMainWindow):
         self.current_mesh_tr = None # Store the currently loaded Trimesh mesh (optional, for editing)
         self.override_color = None # Store the user-selected mesh color override
         self.current_opacity = 1.0 # Store current opacity (1.0 = fully opaque)
+        self.current_filepath = None # Added to store the path of the loaded file
 
         self.setup_menu()
+        self.setStatusBar(QStatusBar(self)) # Add Status Bar
+        self.statusBar().showMessage("Ready") # Initial message
         
         central_widget = QWidget()
         self.setCentralWidget(central_widget)
@@ -35,7 +40,6 @@ class MainWindow(QMainWindow):
 
         # Create the PyVista plotter
         self.plotter = QtInteractor(self) # Initialize without background kwarg
-        self.plotter.set_background('#cccccc') # Set background afterwards
         main_layout.addWidget(self.plotter.interactor)
 
         # --- Control Layout Row 1 (File/Style) ---
@@ -122,6 +126,16 @@ class MainWindow(QMainWindow):
         open_action.triggered.connect(self.load_file)
         file_menu.addAction(open_action)
         
+        # Save As Action
+        save_as_action = QAction("Save &As...", self)
+        save_as_action.triggered.connect(self.save_file_as)
+        file_menu.addAction(save_as_action)
+        
+        # Screenshot Action
+        screenshot_action = QAction("&Screenshot...", self)
+        screenshot_action.triggered.connect(self.take_screenshot)
+        file_menu.addAction(screenshot_action)
+        
         file_menu.addSeparator()
         
         exit_action = QAction("&Exit", self)
@@ -159,6 +173,122 @@ class MainWindow(QMainWindow):
             return 'points'
         return 'surface' # Default fallback
 
+    def take_screenshot(self):
+        if not self.plotter.renderer:
+             self.statusBar().showMessage("Plotter not ready for screenshot.", 3000)
+             return
+             
+        suggested_name = "screenshot.png"
+        if self.current_filepath:
+            try:
+                base = os.path.basename(self.current_filepath)
+                root, _ = os.path.splitext(base)
+                suggested_name = f"{root}_screenshot.png"
+            except Exception:
+                pass
+        
+        filters = "PNG Images (*.png);;JPEG Images (*.jpg *.jpeg);;All Files (*)"
+        fileName, selected_filter = QFileDialog.getSaveFileName(self, "Save Screenshot", suggested_name, filters)
+        
+        if fileName:
+            axes_widget = self.plotter.renderer.axes_widget
+            axes_were_present = False # Default to false
+            if axes_widget: # Check if widget exists
+                 axes_were_present = axes_widget.GetEnabled()
+            
+            # --- Temporarily disable axes for cleaner screenshot --- 
+            if axes_widget and axes_were_present:
+                axes_widget.SetEnabled(False)
+                self.plotter.render() # Force render update
+            # --- End temporary removal --- 
+            
+            try:
+                # Take screenshot with transparent background
+                self.plotter.screenshot(fileName, transparent_background=True)
+                self.statusBar().showMessage(f"Screenshot saved to {fileName}", 5000)
+            except Exception as e:
+                error_message = f"Error saving screenshot: {str(e)}"
+                print(error_message)
+                QMessageBox.warning(self, "Screenshot Error", error_message)
+                self.statusBar().showMessage("Screenshot failed.", 3000)
+            finally:
+                # --- Restore axes if they were disabled --- 
+                if axes_widget and axes_were_present:
+                    axes_widget.SetEnabled(True)
+                    self.plotter.render() # Force render update
+                # --- End restore --- 
+        else:
+             self.statusBar().showMessage("Screenshot cancelled.", 3000)
+
+    def save_file_as(self):
+        if self.current_mesh_tr is None:
+            self.statusBar().showMessage("No mesh loaded to save.", 3000)
+            QMessageBox.information(self, "Save As", "Please load a mesh before saving.")
+            return
+
+        suggested_name = "saved_mesh.ply"
+        # Use self.current_filepath for suggestion
+        if self.current_filepath:
+            try:
+                base = os.path.basename(self.current_filepath)
+                root, _ = os.path.splitext(base)
+                suggested_name = f"{root}_saved.ply"
+            except Exception:
+                 pass
+
+        # Filters based on common trimesh export formats
+        filters = (
+            "PLY Files (*.ply);;"            # Good general purpose, supports color
+            "STL Files (*.stl);;"            # Common for 3D printing, no color
+            "OBJ Files (*.obj);;"            # Widely supported, can have material file
+            "GLTF Binary (*.glb);;"        # Efficient web/modern format, supports PBR
+            "GLTF Ascii (*.gltf);;"         # Text version of GLTF
+            "COLLADA (*.dae);;"             # Older standard, supports animation/scenes
+            "OFF Files (*.off);;"            # Simple ASCII format
+            # "XYZ Point Cloud (*.xyz);;"    # Less common to export mesh as point cloud
+            "All Files (*)"
+        )
+
+        fileName, selected_filter = QFileDialog.getSaveFileName(self, "Save Mesh As", suggested_name, filters)
+
+        if fileName:
+            self.statusBar().showMessage(f"Saving mesh to {os.path.basename(fileName)}...")
+            QApplication.processEvents() # Allow UI update
+            try:
+                colors_to_export = None
+                if 'RGB' in self.current_mesh_pv.point_data:
+                    colors_to_export = self.current_mesh_pv.point_data['RGB']
+                    if colors_to_export.shape[0] == self.current_mesh_tr.vertices.shape[0]:
+                         print("Exporting with vertex colors from PyVista mesh.")
+                         if colors_to_export.shape[1] == 3:
+                            alpha = np.full((colors_to_export.shape[0], 1), 255, dtype=np.uint8)
+                            colors_to_export = np.hstack((colors_to_export, alpha))
+                    else:
+                        print("Color array size mismatch, exporting without explicit colors.")
+                        colors_to_export = None
+                else:
+                    print("No RGB data found in PyVista mesh for export.")
+                    colors_to_export = None
+                
+                mesh_to_export = self.current_mesh_tr.copy()
+                if colors_to_export is not None:
+                    mesh_to_export.visual.vertex_colors = colors_to_export
+                    
+                export_result = mesh_to_export.export(fileName)
+                
+                if export_result is None or isinstance(export_result, str):
+                     self.statusBar().showMessage(f"Mesh saved successfully to {fileName}", 5000)
+                     print(f"Mesh saved via Trimesh to {fileName}")
+                else: 
+                     raise RuntimeError(f"Trimesh export returned unexpected type: {type(export_result)}")
+            except Exception as e:
+                error_message = f"Error saving file: {str(e)}"
+                print(error_message)
+                QMessageBox.critical(self, "Save Error", error_message)
+                self.statusBar().showMessage("Mesh save failed.", 3000)
+        else:
+            self.statusBar().showMessage("Save As cancelled.", 3000)
+
     def update_representation(self):
         if self.current_mesh_pv:
             style = self.get_selected_style()
@@ -194,6 +324,9 @@ class MainWindow(QMainWindow):
             # self.plotter.reset_camera() # Optional: reset camera on update
 
     def load_file(self):
+        # Reset status bar at the start of loading
+        self.statusBar().showMessage("Opening file dialog...")
+        
         file_dialog = QFileDialog(self)
         # Use trimesh supported formats potentially, or keep broad filter
         # trimesh supports many: obj, stl, ply, gltf, glb, dae, off, xyz, etc.
@@ -205,73 +338,87 @@ class MainWindow(QMainWindow):
         ]
         file_path, _ = file_dialog.getOpenFileName(self, "Open 3D File", "", ";;".join(filters))
 
-        if file_path:
-            try:
-                print(f"Attempting to load with Trimesh: {file_path}")
-                # Load mesh using trimesh
-                # force='mesh' attempts to return a Trimesh object if possible
-                mesh_tr = trimesh.load(file_path, force='mesh')
-                print(f"Trimesh loaded object of type: {type(mesh_tr)}")
+        if not file_path:
+            self.statusBar().showMessage("File load cancelled.", 3000)
+            return # Exit if no file selected
 
-                # If trimesh returns a Scene object, try to extract the main geometry
-                if isinstance(mesh_tr, trimesh.Scene):
-                    if len(mesh_tr.geometry) > 0:
-                        # Attempt to combine geometries or take the largest
-                        # This simplistic approach takes the first one
-                        # A more robust method might merge or handle multiple geometries
-                        print(f"Trimesh loaded a Scene. Extracting first geometry.")
-                        mesh_tr = list(mesh_tr.geometry.values())[0]
-                    else:
-                        raise ValueError("Trimesh loaded an empty scene.")
+        # Indicate loading
+        self.statusBar().showMessage(f"Loading {os.path.basename(file_path)}...")
+        QApplication.processEvents() # Allow UI to update
+        
+        try:
+            print(f"Attempting to load with Trimesh: {file_path}")
+            # Load mesh using trimesh
+            # force='mesh' attempts to return a Trimesh object if possible
+            mesh_tr = trimesh.load(file_path, force='mesh')
+            print(f"Trimesh loaded object of type: {type(mesh_tr)}")
 
-                # Ensure we have a Trimesh object now
-                if not isinstance(mesh_tr, trimesh.Trimesh):
-                     raise TypeError(f"Loaded object is not a Trimesh mesh (type: {type(mesh_tr)}). May be a point cloud or unsupported type.")
+            # If trimesh returns a Scene object, try to extract the main geometry
+            if isinstance(mesh_tr, trimesh.Scene):
+                if len(mesh_tr.geometry) > 0:
+                    print(f"Trimesh loaded a Scene. Attempting to concatenate geometry.")
+                    # Consolidate scene geometry into one mesh if possible
+                    mesh_tr = trimesh.util.concatenate(list(mesh_tr.geometry.values()))
+                else:
+                    raise ValueError("Trimesh loaded an empty scene.")
 
-                # Convert trimesh mesh to pyvista PolyData
-                # pv.wrap intelligently handles trimesh objects
-                mesh_pv = pv.wrap(mesh_tr)
-                print(f"Converted Trimesh to PyVista mesh.")
+            # Ensure we have a Trimesh object now
+            if not isinstance(mesh_tr, trimesh.Trimesh):
+                 raise TypeError(f"Loaded object is not a Trimesh mesh (type: {type(mesh_tr)}). May be a point cloud or unsupported type.")
 
-                # --- Transfer Vertex Colors if they exist --- 
-                # trimesh stores vertex colors in mesh.visual.vertex_colors
-                if hasattr(mesh_tr, 'visual') and hasattr(mesh_tr.visual, 'vertex_colors') and len(mesh_tr.visual.vertex_colors) == mesh_tr.vertices.shape[0]:
-                     # PyVista expects uint8 RGB, trimesh often stores RGBA float/uint8
-                     colors = np.array(mesh_tr.visual.vertex_colors)
-                     if colors.shape[1] == 4:
-                         # Assume RGBA, take first 3 channels
-                         colors = colors[:, :3]
-                     # Convert to uint8 if needed (PyVista prefers this for 'RGB')
-                     if colors.dtype != np.uint8:
-                         if np.max(colors) <= 1.0: # Check if colors are in 0-1 range
-                            colors = (colors * 255).astype(np.uint8)
-                         else:
-                             colors = colors.astype(np.uint8)
-                     mesh_pv.point_data['RGB'] = colors
-                     print("Transferred vertex colors from Trimesh to PyVista.")
-                # --- End Color Transfer ---
+            # Convert trimesh mesh to pyvista PolyData
+            # pv.wrap intelligently handles trimesh objects
+            mesh_pv = pv.wrap(mesh_tr)
+            print(f"Converted Trimesh to PyVista mesh.")
 
-                self.current_mesh_tr = mesh_tr # Store trimesh object (optional)
-                self.current_mesh_pv = mesh_pv # Store pyvista object
+            # --- Transfer Vertex Colors if they exist --- 
+            # trimesh stores vertex colors in mesh.visual.vertex_colors
+            if hasattr(mesh_tr, 'visual') and hasattr(mesh_tr.visual, 'vertex_colors') and len(mesh_tr.visual.vertex_colors) == mesh_tr.vertices.shape[0]:
+                 # PyVista expects uint8 RGB, trimesh often stores RGBA float/uint8
+                 colors = np.array(mesh_tr.visual.vertex_colors)
+                 if colors.shape[1] == 4:
+                     # Assume RGBA, take first 3 channels
+                     colors = colors[:, :3]
+                 # Convert to uint8 if needed (PyVista prefers this for 'RGB')
+                 if colors.dtype != np.uint8:
+                     if np.max(colors) <= 1.0: # Check if colors are in 0-1 range
+                        colors = (colors * 255).astype(np.uint8)
+                     else:
+                         colors = colors.astype(np.uint8)
+                 mesh_pv.point_data['RGB'] = colors
+                 print("Transferred vertex colors from Trimesh to PyVista.")
+            # --- End Color Transfer ---
 
-                # Reset override color and opacity on new load
-                self.override_color = None 
-                self.current_opacity = 1.0
-                self.opacity_slider.setValue(100)
-                self.opacity_label.setText("1.0")
+            self.current_mesh_tr = mesh_tr # Store trimesh object (optional)
+            self.current_mesh_pv = mesh_pv # Store pyvista object
 
-                self.plotter.clear() # Clear previous mesh
-                self.update_representation() # Call update_representation to draw the mesh
-                self.plotter.reset_camera()
-                print(f"Successfully loaded and displayed: {file_path}")
+            # Reset override color and opacity on new load
+            self.override_color = None 
+            self.current_opacity = 1.0
+            self.opacity_slider.setValue(100)
+            self.opacity_label.setText("1.0")
 
-            except Exception as e:
-                self.current_mesh_tr = None
-                self.current_mesh_pv = None # Clear mesh on error
-                error_message = f"Error loading file with Trimesh: {file_path}\n{str(e)}"
-                print(error_message)
-                QMessageBox.critical(self, "Load Error", error_message)
-                self.plotter.clear() # Clear plotter view on error
+            self.plotter.clear() # Clear previous mesh
+            self.update_representation() # Call update_representation to draw the mesh
+            self.plotter.reset_camera()
+            
+            # Store the path in the instance variable
+            self.current_filepath = file_path
+            
+            # Update status bar using the instance variable
+            status_text = f"Loaded: {os.path.basename(self.current_filepath)} | Vertices: {self.current_mesh_pv.n_points} | Cells: {self.current_mesh_pv.n_cells}"
+            self.statusBar().showMessage(status_text)
+            print(f"Successfully loaded and displayed: {self.current_filepath}")
+
+        except Exception as e:
+            self.current_mesh_tr = None
+            self.current_mesh_pv = None # Clear mesh on error
+            self.current_filepath = None # Clear filepath on error
+            error_message = f"Error loading file with Trimesh: {file_path}\n{str(e)}" # Use original file_path for error msg
+            print(error_message)
+            QMessageBox.critical(self, "Load Error", error_message)
+            self.plotter.clear() # Clear plotter view on error
+            self.statusBar().showMessage("File load failed.", 5000)
 
 
 if __name__ == "__main__":
