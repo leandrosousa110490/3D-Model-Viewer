@@ -1,19 +1,25 @@
-# Simple 3D Viewer
+# Simple 3D/2D Viewer
 
-A basic 3D model viewer application built with Python, PyQt6, PyVista, and Trimesh.
+A basic 3D model and 2D image viewer application built with Python, PyQt6, PyVista, Trimesh, and Rembg.
 
 ## Features
 
-*   Loads various 3D mesh file formats (OBJ, STL, PLY, GLTF, etc.) using Trimesh.
-*   Displays meshes using PyVista.
-*   Supports basic visualization styles (Surface, Wireframe, Points).
-*   Allows changing background color.
-*   Allows overriding mesh color.
-*   Allows adjusting mesh opacity.
-*   Uses vertex colors if present in the loaded file.
-*   Displays basic mesh info (vertex/cell count) in status bar.
-*   Saves screenshots (PNG with transparent background, JPG) via File menu.
-*   Saves the loaded mesh to various formats (PLY, STL, OBJ, GLB, etc.) via File menu.
+*   **3D Models:**
+    *   Loads various 3D mesh file formats (OBJ, STL, PLY, GLTF, etc.) using Trimesh via `File > Open 3D Model...`.
+    *   Displays 3D meshes using PyVista.
+    *   Supports basic visualization styles (Surface, Wireframe, Points).
+    *   Allows changing background color.
+    *   Allows overriding mesh color (for 3D models only).
+    *   Allows adjusting mesh/image opacity.
+    *   Uses vertex colors if present in the loaded 3D model file.
+    *   Displays basic mesh info (vertex/cell count) in status bar.
+    *   Saves the loaded 3D mesh to various formats (PLY, STL, OBJ, GLB, etc.) via `File > Save As (3D Model)...`.
+*   **2D Images:**
+    *   Loads various 2D image formats (PNG, JPG, BMP, TIFF, etc.) via `File > Open 2D Image...`.
+    *   Displays loaded 2D images on a flat plane within the 3D viewer.
+    *   Allows removing the background from the loaded 2D image using the "Remove Background" button (powered by `rembg`).
+*   **General:**
+    *   Saves screenshots of the current view (PNG with transparent background, JPG) via `File > Screenshot...`.
 
 ## Setup
 
@@ -32,10 +38,13 @@ A basic 3D model viewer application built with Python, PyQt6, PyVista, and Trime
     source venv/bin/activate
     ```
 
-3.  **Install dependencies:**
-    ```bash
-    pip install -r requirements.txt
-    ```
+3.  **Install Dependencies:**
+    *   **Crucial for Windows Users:** The background removal feature uses `onnxruntime`, which requires the **Microsoft Visual C++ Redistributable**. Please download and install the latest **X64** version from [here](https://learn.microsoft.com/en-us/cpp/windows/latest-supported-vc-redist?view=msvc-170) and **restart your computer** before proceeding.
+    *   Install Python packages:
+        ```bash
+        pip install -r requirements.txt
+        ```
+        *Note: The first time you use the "Remove Background" feature, the `rembg` library might automatically download necessary AI models.*
 
 ## Running the Application
 
@@ -45,7 +54,7 @@ python main.py
 
 ## Generating Test Files (Optional)
 
-The `generate_test_files.py` script can create some sample `.ply` files (a colored prism, cone, and sphere) and uncolored versions of the sphere in other formats inside a `test_files` directory.
+The `generate_test_files.py` script (if present) can create some sample `.ply` files (a colored prism, cone, and sphere) and uncolored versions of the sphere in other formats inside a `test_files` directory.
 
 ```bash
 python generate_test_files.py
